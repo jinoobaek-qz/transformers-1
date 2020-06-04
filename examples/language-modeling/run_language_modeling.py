@@ -34,9 +34,8 @@ from transformers import (
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
-    LineByLineTextDataset,
+    MyDataset,
     PreTrainedTokenizer,
-    TextDataset,
     Trainer,
     TrainingArguments,
     set_seed,
@@ -115,14 +114,25 @@ class DataTrainingArguments:
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False):
+def get_dataset(args: DataTrainingArguments,
+                tokenizer: PreTrainedTokenizer,
+                prefetch_size: int,
+                evaluate=False):
     file_path = args.eval_data_file if evaluate else args.train_data_file
-    if args.line_by_line:
-        return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
-    else:
-        return TextDataset(
-            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, overwrite_cache=args.overwrite_cache
-        )
+    return MyDataset(tokenizer=tokenizer,
+                     file_path=file_path,
+                     block_size=args.block_size,
+                     batch_size=1,
+                     prefetch_size=prefetch_size,
+                     cache_path='/data/cache/roberta_lm_cache',
+                     pre_map_cache_path='/data/cache/roberta_lm_cache_premap',
+                     debug=False)
+    # if args.line_by_line:
+    #     return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
+    # else:
+    #     return TextDataset(
+    #         tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, overwrite_cache=args.overwrite_cache
+    #     )
 
 
 def main():
@@ -219,8 +229,22 @@ def main():
 
     # Get datasets
 
-    train_dataset = get_dataset(data_args, tokenizer=tokenizer) if training_args.do_train else None
-    eval_dataset = get_dataset(data_args, tokenizer=tokenizer, evaluate=True) if training_args.do_eval else None
+    model_path = (
+        model_args.model_name_or_path
+        if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
+        else None
+    )
+    global_step = 0
+    if model_path:
+        global_step = int(model_path.split("-")[-1].split("/")[0])
+
+    train_dataset = get_dataset(data_args,
+                                tokenizer=tokenizer,
+                                prefetch_size=training_args.train_batch_size) if training_args.do_train else None
+    eval_dataset = get_dataset(data_args,
+                               tokenizer=tokenizer,
+                               prefetch_size=training_args.eval_batch_size,
+                               evaluate=True) if training_args.do_eval else None
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
@@ -237,12 +261,7 @@ def main():
 
     # Training
     if training_args.do_train:
-        model_path = (
-            model_args.model_name_or_path
-            if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
-            else None
-        )
-        trainer.train(model_path=model_path)
+        trainer.train(global_step=global_step, model_path=model_path)
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,
         # so that you can share your model easily on huggingface.co/models =)

@@ -33,7 +33,9 @@ class XnliProcessor(DataProcessor):
         self.language = language
         self.train_language = train_language
 
-    def get_train_examples(self, data_dir):
+    def get_train_examples(self, data_dir, debug=False):
+        if debug:
+            return self.get_test_examples(data_dir, debug=True)
         """See base class."""
         lg = self.language if self.train_language is None else self.train_language
         lines = self._read_tsv(os.path.join(data_dir, "XNLI-MT-1.0/multinli/multinli.train.{}.tsv".format(lg)))
@@ -49,7 +51,7 @@ class XnliProcessor(DataProcessor):
             examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples
 
-    def get_test_examples(self, data_dir):
+    def get_test_examples(self, data_dir, debug=False):
         """See base class."""
         lines = self._read_tsv(os.path.join(data_dir, "XNLI-1.0/xnli.test.tsv"))
         examples = []
@@ -65,6 +67,8 @@ class XnliProcessor(DataProcessor):
             label = line[1]
             assert isinstance(text_a, str) and isinstance(text_b, str) and isinstance(label, str)
             examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+        if debug:
+            return examples[:100]
         return examples
 
     def get_labels(self):

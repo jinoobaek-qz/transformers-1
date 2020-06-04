@@ -5,6 +5,7 @@ import os
 import random
 import re
 import shutil
+import copy
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -188,6 +189,8 @@ class Trainer:
             prediction_loss_only:
                 (Optional) in evaluation and prediction, only return the loss
         """
+        if args.device.type == 'xla':
+            self.model_pre_xla = copy.deepcopy(model)
         self.model = model.to(args.device)
         self.args = args
         if data_collator is not None:
@@ -306,11 +309,11 @@ class Trainer:
         no_decay = ["bias", "LayerNorm.weight"]
         optimizer_grouped_parameters = [
             {
-                "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
+                "params": [p for n, p in self.model_pre_xla.named_parameters() if not any(nd in n for nd in no_decay)],
                 "weight_decay": self.args.weight_decay,
             },
             {
-                "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
+                "params": [p for n, p in self.model_pre_xla.named_parameters() if any(nd in n for nd in no_decay)],
                 "weight_decay": 0.0,
             },
         ]
@@ -350,7 +353,7 @@ class Trainer:
         """
         return len(dataloader.dataset)
 
-    def train(self, model_path: Optional[str] = None):
+    def train(self, global_step: int = None, model_path: Optional[str] = None):
         """
         Main training entry point.
 
@@ -370,6 +373,9 @@ class Trainer:
             num_train_epochs = self.args.num_train_epochs
 
         optimizer, scheduler = self.get_optimizers(num_training_steps=t_total)
+        model_pre_xla = self.model_pre_xla
+        self.model_pre_xla = None
+        del model_pre_xla
 
         # Check if saved optimizer or scheduler states exist
         if (
@@ -378,9 +384,18 @@ class Trainer:
             and os.path.isfile(os.path.join(model_path, "scheduler.pt"))
         ):
             # Load in optimizer and scheduler states
-            optimizer.load_state_dict(
-                torch.load(os.path.join(model_path, "optimizer.pt"), map_location=self.args.device)
-            )
+            optimizer_map_location_device = self.args.device
+            if self.args.device.type == 'xla':
+                optimizer_map_location_device = torch.device('cpu')
+            optimizer_state_dict = torch.load(os.path.join(model_path, "optimizer.pt"),
+                                              map_location=optimizer_map_location_device)
+
+            optimizer.load_state_dict(optimizer_state_dict)
+            if self.args.device.type == 'xla':
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(self.args.device)
             scheduler.load_state_dict(torch.load(os.path.join(model_path, "scheduler.pt")))
 
         model = self.model
@@ -431,7 +446,10 @@ class Trainer:
         if model_path is not None:
             # set global_step to global_step of last saved checkpoint from model path
             try:
-                self.global_step = int(model_path.split("-")[-1].split("/")[0])
+                if global_step is None:
+                    self.global_step = int(model_path.split("-")[-1].split("/")[0])
+                else:
+                    self.global_step = global_step
                 epochs_trained = self.global_step // (len(train_dataloader) // self.args.gradient_accumulation_steps)
                 steps_trained_in_current_epoch = self.global_step % (
                     len(train_dataloader) // self.args.gradient_accumulation_steps
@@ -490,7 +508,14 @@ class Trainer:
                     scheduler.step()
                     model.zero_grad()
                     self.global_step += 1
-                    self.epoch = epoch + (step + 1) / len(epoch_iterator)
+
+                    denominator = len(train_dataloader)
+                    try:
+                        denominator = len(epoch_iterator)
+                    except TypeError:
+                        logger.info('no len by epoch_iterator')
+
+                    self.epoch = epoch + (step + 1) / denominator
 
                     if (self.args.logging_steps > 0 and self.global_step % self.args.logging_steps == 0) or (
                         self.global_step == 1 and self.args.logging_first_step
@@ -548,6 +573,18 @@ class Trainer:
 
         logger.info("\n\nTraining completed. Do not forget to share your model on huggingface.co/models =)\n\n")
         return TrainOutput(self.global_step, tr_loss / self.global_step)
+
+    @staticmethod
+    def get_total_train_batch_size(args: TrainingArguments):
+        if is_tpu_available():
+            total_train_batch_size = args.train_batch_size * xm.xrt_world_size()
+        else:
+            total_train_batch_size = (
+                    args.train_batch_size
+                    * args.gradient_accumulation_steps
+                    * (torch.distributed.get_world_size() if args.local_rank != -1 else 1)
+            )
+        return total_train_batch_size
 
     def _log(self, logs: Dict[str, float], iterator: Optional[tqdm] = None) -> None:
         if self.epoch is not None:

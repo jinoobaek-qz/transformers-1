@@ -66,3 +66,8 @@ class RobertaConfig(BertConfig):
         """Constructs RobertaConfig.
         """
         super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
+        self.summary_type = 'first'
+        self.summary_use_proj = True
+        self.summary_activation = None
+        self.summary_proj_to_labels = True
+        self.summary_first_dropout = 0.1

@@ -28,6 +28,7 @@ import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
+import wandb
 
 from transformers import (
     WEIGHTS_NAME,
@@ -90,12 +91,16 @@ def train(args, train_dataset, model, tokenizer):
     )
 
     # Check if saved optimizer or scheduler states exist
-    if os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) and os.path.isfile(
+    if not args.no_load_optimizer_from_file and os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) and os.path.isfile(
         os.path.join(args.model_name_or_path, "scheduler.pt")
     ):
+        logger.info('Loading optimizer from file')
         # Load in optimizer and scheduler states
         optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
         scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "scheduler.pt")))
+    else:
+        logger.info('Not loading optimizer from file')
+
 
     if args.fp16:
         try:
@@ -132,7 +137,7 @@ def train(args, train_dataset, model, tokenizer):
     epochs_trained = 0
     steps_trained_in_current_epoch = 0
     # Check if continuing training from a checkpoint
-    if os.path.exists(args.model_name_or_path):
+    if os.path.exists(args.model_name_or_path) and not args.no_skip_trained_in_current_epoch:
         # set global_step to gobal_step of last saved checkpoint from model path
         global_step = int(args.model_name_or_path.split("-")[-1].split("/")[0])
         epochs_trained = global_step // (len(train_dataloader) // args.gradient_accumulation_steps)
@@ -198,13 +203,21 @@ def train(args, train_dataset, model, tokenizer):
                         results = evaluate(args, model, tokenizer)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+                            if args.wandb_project_name is not None:
+                                wandb.log({"eval_{}".format(key): value}, step=global_step)
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                    if args.wandb_project_name is not None:
+                        wandb.log({"lr": scheduler.get_lr()[0]}, step=global_step)
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
+                    if args.wandb_project_name is not None:
+                        wandb.log({"loss": (tr_loss - logging_loss) / args.logging_steps}, step=global_step)
                     logging_loss = tr_loss
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     # Save model checkpoint
                     output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
+                    if args.wandb_project_name is not None:
+                        output_dir = os.path.join(args.output_dir, "checkpoint-{}-{}".format(wandb.run.id, global_step))
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
                     model_to_save = (
@@ -290,8 +303,13 @@ def evaluate(args, model, tokenizer, prefix=""):
             raise ValueError("No other `output_mode` for XNLI.")
         result = compute_metrics(eval_task, preds, out_label_ids)
         results.update(result)
+        if args.wandb_project_name:
+            wandb.log(result)
 
         output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
+        output_eval_path = os.path.dirname(output_eval_file)
+        if not os.path.exists(output_eval_path):
+            os.makedirs(output_eval_path)
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results {} *****".format(prefix))
             for key in sorted(result.keys()):
@@ -318,6 +336,7 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             str(args.train_language if (not evaluate and args.train_language is not None) else args.language),
         ),
     )
+    logger.info('Cached feature file path: {}'.format(cached_features_file))
     if os.path.exists(cached_features_file) and not args.overwrite_cache:
         logger.info("Loading features from cached file %s", cached_features_file)
         features = torch.load(cached_features_file)
@@ -325,7 +344,7 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
         logger.info("Creating features from dataset file at %s", args.data_dir)
         label_list = processor.get_labels()
         examples = (
-            processor.get_test_examples(args.data_dir) if evaluate else processor.get_train_examples(args.data_dir)
+            processor.get_test_examples(args.data_dir, args.debug) if evaluate else processor.get_train_examples(args.data_dir, args.debug)
         )
         features = convert_examples_to_features(
             examples, tokenizer, max_length=args.max_seq_length, label_list=label_list, output_mode=output_mode,
@@ -340,7 +359,7 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
-    all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
+    all_token_type_ids = torch.tensor([f.token_type_ids if f.token_type_ids else 0 for f in features], dtype=torch.long)
     if output_mode == "classification":
         all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
     else:
@@ -457,6 +476,12 @@ def main():
     parser.add_argument(
         "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets"
     )
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="Overwrite the cached training and evaluation sets"
+    )
+    parser.add_argument(
+        "--only_featurize", action="store_true", default=False, help="Overwrite the cached training and evaluation sets"
+    )
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
 
     parser.add_argument(
@@ -474,7 +499,14 @@ def main():
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--server_ip", type=str, default="", help="For distant debugging.")
     parser.add_argument("--server_port", type=str, default="", help="For distant debugging.")
+    parser.add_argument("--wandb_project_name", type=str, default=None, required=False)
+    parser.add_argument("--no_load_optimizer_from_file", default=False, action='store_true')
+    parser.add_argument("--no_skip_trained_in_current_epoch", default=False, action='store_true')
     args = parser.parse_args()
+
+    if args.wandb_project_name is not None:
+        wandb.init(project=args.wandb_project_name)
+        wandb.config.update(args)
 
     if (
         os.path.exists(args.output_dir)
@@ -558,6 +590,9 @@ def main():
         cache_dir=args.cache_dir,
     )
 
+    if args.wandb_project_name is not None:
+        wandb.watch(model)
+
     if args.local_rank == 0:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 
@@ -568,6 +603,8 @@ def main():
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
+        if args.only_featurize:
+            return
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 

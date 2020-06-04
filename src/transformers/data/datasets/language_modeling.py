@@ -2,7 +2,9 @@ import logging
 import os
 import pickle
 import time
+import glob
 
+import tensorflow as tf
 import torch
 from filelock import FileLock
 from torch.utils.data.dataset import Dataset
@@ -99,3 +101,92 @@ class LineByLineTextDataset(Dataset):
 
     def __getitem__(self, i) -> torch.Tensor:
         return torch.tensor(self.examples[i], dtype=torch.long)
+
+
+_PROVIDED_FEATURES = {
+    'set_id': tf.io.FixedLenFeature([], tf.int64),
+    'index': tf.io.FixedLenFeature([], tf.int64),
+    'visit_count_1y': tf.io.FixedLenFeature([], tf.int64),
+    'studier_count': tf.io.FixedLenFeature([], tf.int64),
+    'content': tf.io.FixedLenFeature([], tf.string),
+    'def_lang': tf.io.FixedLenFeature([], tf.string),
+    'term_lang': tf.io.FixedLenFeature([], tf.string),
+}
+
+
+class MyDataset(Dataset):
+    def __init__(self,
+                 tokenizer: PreTrainedTokenizer,
+                 file_path: str,
+                 block_size: int,
+                 batch_size: int,
+                 prefetch_size: int,
+                 cache_path: str = '/data/cache/roberta_lm_cache',
+                 pre_map_cache_path: str = '/data/cache/roberta_lm_cache_premap',
+                 debug: bool = False):
+        logger.info("Creating dataset from %s", file_path)
+
+        tf.config.set_visible_devices([], 'GPU')
+        dataset = MyDataset._my_input_fn(filename_or_glob=file_path,
+                                         features=_PROVIDED_FEATURES,
+                                         cache_path=cache_path,
+                                         pre_map_cache_path=pre_map_cache_path,
+                                         batch_size=batch_size,
+                                         debug=debug,
+                                         prefetch_size=prefetch_size,
+                                         )
+        self.dataset = dataset.repeat(-1)
+        self.block_size = block_size
+        self.tokenizer = tokenizer
+        self.current_skip = 0
+
+    def __len__(self):
+        return 187_000_000
+
+    def __getitem__(self, i) -> torch.tensor:
+        try:
+            self.dataset = self.dataset.skip(max(0, i - self.current_skip))
+            self.current_skip = i
+            it = iter(self.dataset)
+            lines = next(it)
+            lines = [line.decode('utf-8') for line in lines.numpy()]
+            batch_encoding = self.tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=self.block_size)
+            batches = batch_encoding["input_ids"]
+        except Exception as e:
+            logger.warning('Exception with {}'.format(e))
+        return torch.tensor(batches[0], dtype=torch.long)
+
+    @staticmethod
+    def _my_parse(serialized_example, features):
+        example = tf.io.parse_single_example(serialized_example, features)
+        return example['content']
+
+    @staticmethod
+    def _my_input_fn(filename_or_glob,
+                     features,
+                     cache_path='/data/cache/tf_dataset_cache',
+                     pre_map_cache_path='/data/cache/tf_dataset_pre_map_cache',
+                     delete_cache=False,
+                     batch_size=32,
+                     prefetch_size=32,
+                     debug=False):
+        if delete_cache:
+            file_list = glob.glob(cache_path + '*')
+            for file_path in file_list:
+                os.remove(file_path)
+
+        dataset = tf.data.Dataset.list_files(filename_or_glob, shuffle=False)
+
+        def _mapper(x):
+            return MyDataset._my_parse(x, features)
+
+        if debug:
+            dataset = dataset.interleave(tf.data.TFRecordDataset) \
+                .map(_mapper)
+        else:
+            dataset = dataset.interleave(tf.data.TFRecordDataset,
+                                         num_parallel_calls=tf.data.experimental.AUTOTUNE,
+                                         deterministic=True) \
+                .map(_mapper, num_parallel_calls=tf.data.experimental.AUTOTUNE) \
+                .prefetch(buffer_size=prefetch_size)
+        return dataset

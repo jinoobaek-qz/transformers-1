@@ -298,6 +298,7 @@ if is_torch_available():
         XLMRobertaModel,
         XLMRobertaForMultipleChoice,
         XLMRobertaForSequenceClassification,
+        XLMRobertaForSequenceClassification2,
         XLMRobertaForTokenClassification,
         XLMRobertaForQuestionAnswering,
         XLM_ROBERTA_PRETRAINED_MODEL_ARCHIVE_LIST,
@@ -355,7 +356,7 @@ if is_torch_available():
     # Trainer
     from .trainer import Trainer, set_seed, torch_distributed_zero_first, EvalPrediction
     from .data.data_collator import DefaultDataCollator, DataCollator, DataCollatorForLanguageModeling
-    from .data.datasets import GlueDataset, TextDataset, LineByLineTextDataset, GlueDataTrainingArguments
+    from .data.datasets import GlueDataset, TextDataset, LineByLineTextDataset, GlueDataTrainingArguments, MyDataset
 
     # Benchmarks
     from .benchmark import PyTorchBenchmark, PyTorchBenchmarkArguments
