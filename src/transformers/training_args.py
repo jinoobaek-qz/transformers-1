@@ -115,7 +115,6 @@ class TrainingArguments:
     no_cuda: bool = field(default=False, metadata={"help": "Do not use CUDA even when it is available"})
     seed: int = field(default=42, metadata={"help": "random seed for initialization"})
 
-    wandb_project_name: Optional[str] = field(default=None, metadata={"help": "wandb project name"})
     fp16: bool = field(
         default=False,
         metadata={"help": "Whether to use 16-bit (mixed) precision (through NVIDIA apex) instead of 32-bit"},

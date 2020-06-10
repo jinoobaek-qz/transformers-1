@@ -17,7 +17,6 @@
 
 
 import logging
-import json
 
 import tensorflow as tf
 
@@ -34,6 +33,7 @@ from .modeling_tf_utils import (
     keras_serializable,
     shape_list,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +91,11 @@ class TFRobertaEmbeddings(TFBertEmbeddings):
         return super()._embedding([input_ids, position_ids, token_type_ids, inputs_embeds], training=training)
 
 
+@keras_serializable
 class TFRobertaMainLayer(TFBertMainLayer):
     """
     Same as TFBertMainLayer but uses TFRobertaEmbeddings.
     """
-
-    config_class = RobertaConfig
 
     def __init__(self, config, **kwargs):
         super().__init__(config, **kwargs)

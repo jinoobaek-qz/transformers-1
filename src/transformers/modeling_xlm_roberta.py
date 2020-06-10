@@ -25,7 +25,6 @@ from .modeling_roberta import (
     RobertaForMultipleChoice,
     RobertaForQuestionAnswering,
     RobertaForSequenceClassification,
-    RobertaForSequenceClassification2,
     RobertaForTokenClassification,
     RobertaModel,
 )

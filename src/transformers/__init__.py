@@ -298,7 +298,6 @@ if is_torch_available():
         XLMRobertaModel,
         XLMRobertaForMultipleChoice,
         XLMRobertaForSequenceClassification,
-        XLMRobertaForSequenceClassification2,
         XLMRobertaForTokenClassification,
         XLMRobertaForQuestionAnswering,
         XLM_ROBERTA_PRETRAINED_MODEL_ARCHIVE_LIST,

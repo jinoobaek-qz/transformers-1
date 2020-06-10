@@ -28,7 +28,17 @@ import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
-import wandb
+try:
+    import wandb
+
+    wandb.ensure_configured()
+    if wandb.api.api_key is None:
+        _has_wandb = False
+        wandb.termwarn("W&B installed but not logged in.  Run `wandb login` or set the WANDB_API_KEY env variable.")
+    else:
+        _has_wandb = False if os.getenv("WANDB_DISABLED") else True
+except ImportError:
+    _has_wandb = False
 
 from transformers import (
     WEIGHTS_NAME,
@@ -203,20 +213,20 @@ def train(args, train_dataset, model, tokenizer):
                         results = evaluate(args, model, tokenizer)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-                            if args.wandb_project_name is not None:
+                            if args.wandb_project_name is not None and _has_wandb:
                                 wandb.log({"eval_{}".format(key): value}, step=global_step)
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
-                    if args.wandb_project_name is not None:
+                    if args.wandb_project_name is not None and _has_wandb:
                         wandb.log({"lr": scheduler.get_lr()[0]}, step=global_step)
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
-                    if args.wandb_project_name is not None:
+                    if args.wandb_project_name is not None and _has_wandb:
                         wandb.log({"loss": (tr_loss - logging_loss) / args.logging_steps}, step=global_step)
                     logging_loss = tr_loss
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     # Save model checkpoint
                     output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
-                    if args.wandb_project_name is not None:
+                    if args.wandb_project_name is not None and _has_wandb:
                         output_dir = os.path.join(args.output_dir, "checkpoint-{}-{}".format(wandb.run.id, global_step))
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
@@ -504,7 +514,7 @@ def main():
     parser.add_argument("--no_skip_trained_in_current_epoch", default=False, action='store_true')
     args = parser.parse_args()
 
-    if args.wandb_project_name is not None:
+    if args.wandb_project_name is not None and _has_wandb:
         wandb.init(project=args.wandb_project_name)
         wandb.config.update(args)
 
@@ -590,7 +600,7 @@ def main():
         cache_dir=args.cache_dir,
     )
 
-    if args.wandb_project_name is not None:
+    if args.wandb_project_name is not None and _has_wandb:
         wandb.watch(model)
 
     if args.local_rank == 0:

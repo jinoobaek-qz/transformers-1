@@ -228,13 +228,6 @@ def main():
         data_args.block_size = min(data_args.block_size, tokenizer.max_len)
 
     # Get datasets
-
-    model_path = (
-        model_args.model_name_or_path
-        if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
-        else None
-    )
-
     train_dataset = get_dataset(data_args,
                                 tokenizer=tokenizer,
                                 prefetch_size=training_args.train_batch_size) if training_args.do_train else None
@@ -258,6 +251,11 @@ def main():
 
     # Training
     if training_args.do_train:
+        model_path = (
+            model_args.model_name_or_path
+            if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
+            else None
+        )
         trainer.train(model_path=model_path)
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,

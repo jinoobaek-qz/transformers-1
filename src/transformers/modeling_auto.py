@@ -123,7 +123,6 @@ from .modeling_xlm_roberta import (
     XLMRobertaForMultipleChoice,
     XLMRobertaForQuestionAnswering,
     XLMRobertaForSequenceClassification,
-    XLMRobertaForSequenceClassification2,
     XLMRobertaForTokenClassification,
     XLMRobertaModel,
 )
