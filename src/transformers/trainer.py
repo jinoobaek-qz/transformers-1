@@ -353,7 +353,7 @@ class Trainer:
         """
         return len(dataloader.dataset)
 
-    def train(self, global_step: int = None, model_path: Optional[str] = None):
+    def train(self, model_path: Optional[str] = None):
         """
         Main training entry point.
 
@@ -446,10 +446,7 @@ class Trainer:
         if model_path is not None:
             # set global_step to global_step of last saved checkpoint from model path
             try:
-                if global_step is None:
-                    self.global_step = int(model_path.split("-")[-1].split("/")[0])
-                else:
-                    self.global_step = global_step
+                self.global_step = int(model_path.split("-")[-1].split("/")[0])
                 epochs_trained = self.global_step // (len(train_dataloader) // self.args.gradient_accumulation_steps)
                 steps_trained_in_current_epoch = self.global_step % (
                     len(train_dataloader) // self.args.gradient_accumulation_steps
@@ -573,18 +570,6 @@ class Trainer:
 
         logger.info("\n\nTraining completed. Do not forget to share your model on huggingface.co/models =)\n\n")
         return TrainOutput(self.global_step, tr_loss / self.global_step)
-
-    @staticmethod
-    def get_total_train_batch_size(args: TrainingArguments):
-        if is_tpu_available():
-            total_train_batch_size = args.train_batch_size * xm.xrt_world_size()
-        else:
-            total_train_batch_size = (
-                    args.train_batch_size
-                    * args.gradient_accumulation_steps
-                    * (torch.distributed.get_world_size() if args.local_rank != -1 else 1)
-            )
-        return total_train_batch_size
 
     def _log(self, logs: Dict[str, float], iterator: Optional[tqdm] = None) -> None:
         if self.epoch is not None:

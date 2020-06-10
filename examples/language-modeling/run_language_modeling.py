@@ -234,9 +234,6 @@ def main():
         if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
         else None
     )
-    global_step = 0
-    if model_path:
-        global_step = int(model_path.split("-")[-1].split("/")[0])
 
     train_dataset = get_dataset(data_args,
                                 tokenizer=tokenizer,
@@ -261,7 +258,7 @@ def main():
 
     # Training
     if training_args.do_train:
-        trainer.train(global_step=global_step, model_path=model_path)
+        trainer.train(model_path=model_path)
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,
         # so that you can share your model easily on huggingface.co/models =)
