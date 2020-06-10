@@ -86,20 +86,6 @@ class XLMRobertaForMaskedLM(RobertaForMaskedLM):
     on top of the pooled output) e.g. for GLUE tasks. """,
     XLM_ROBERTA_START_DOCSTRING,
 )
-class XLMRobertaForSequenceClassification2(RobertaForSequenceClassification2):
-    """
-    This class overrides :class:`~transformers.RobertaForSequenceClassification`. Please check the
-    superclass for the appropriate documentation alongside usage examples.
-    """
-
-    config_class = XLMRobertaConfig
-
-
-@add_start_docstrings(
-    """XLM-RoBERTa Model transformer with a sequence classification/regression head on top (a linear layer
-    on top of the pooled output) e.g. for GLUE tasks. """,
-    XLM_ROBERTA_START_DOCSTRING,
-)
 class XLMRobertaForSequenceClassification(RobertaForSequenceClassification):
     """
     This class overrides :class:`~transformers.RobertaForSequenceClassification`. Please check the
